@@ -1,0 +1,9 @@
+*
+
+!./Cargo.lock
+!./backend/Cargo.toml
+!./backend/Rocket.toml
+!./backend/src
+!./frontend/Cargo.toml
+!./frontend/index.html
+!./frontend/src

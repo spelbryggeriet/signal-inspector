@@ -1,0 +1,181 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bumpVersion:
+        description: "Bump version"
+        required: true
+        default: patch
+        type: choice
+        options:
+        - skip
+        - patch
+        - minor
+        - major
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.66.0
+
+jobs:
+  prepare_version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gv.outputs.version }}
+    steps:
+    - uses: actions/checkout@v3
+    - name: Check branch
+      run: |
+        if [[ ! `git branch --show-current` = 'master' ]] ; then
+          echo "Releases can only be created from the \`master\` branch" >&2
+          exit 1
+        fi
+    - name: Prepare branch
+      run: |
+        git fetch --tags
+        git checkout -b feature
+    - name: Bump version
+      if: inputs.bumpVersion != 'skip'
+      run: |
+        scripts/bump_version.py ${{ inputs.bumpVersion }} ${{ github.repository_owner }}
+    - name: Get version
+      id: gv
+      run: |
+        version=`scripts/get_version.py`
+        echo "version=$version" >> $GITHUB_OUTPUT
+    - name: Update lock file
+      if: inputs.bumpVersion != 'skip'
+      uses: actions-rs/cargo@v1
+      with:
+        command: update
+        args: --package game-box-backend --package game-box-frontend
+    - name: Create release branch
+      if: inputs.bumpVersion != 'skip'
+      id: crb
+      run: |
+        release_branch="release/v${VERSION}"
+        git checkout -b "$release_branch"
+        git \
+          -c author.name=${{ github.actor }} \
+          -c author.email=${{ github.actor }}@users.noreply.github.com \
+          -c committer.name=Github \
+          -c committer.email=noreply@github.com \
+          commit -a -m "Prepare release v${VERSION}"
+        git push --set-upstream origin "$release_branch"
+        echo "release_branch=$release_branch" >> $GITHUB_OUTPUT
+      env:
+        VERSION: ${{ steps.gv.outputs.version }}
+    - name: Create pull request
+      if: inputs.bumpVersion != 'skip'
+      id: cpr
+      uses: octokit/request-action@v2.x
+      with:
+        route: POST /repos/${{ github.repository }}/pulls
+        title: Release v${{ env.VERSION }}
+        body: Bump to version v${{ env.VERSION }}.
+        base: master
+        head: ${{ env.RELEASE_BRANCH }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_BRANCH: ${{ steps.crb.outputs.release_branch }}
+        VERSION: ${{ steps.gv.outputs.version }}
+    - name: Get pull request number
+      if: inputs.bumpVersion != 'skip'
+      id: gprn
+      uses: sergeysova/jq-action@v2
+      with:
+        cmd: echo '${{ steps.cpr.outputs.data }}' | jq .number -r
+      env:
+        JSON_DATA: ${{ steps.cpr.outputs.data }}
+    - name: Merge pull request
+      if: inputs.bumpVersion != 'skip'
+      uses: octokit/request-action@v2.x
+      with:
+        route: PUT /repos/${{ github.repository }}/pulls/${{ env.PULL_NUMBER }}/merge
+        commit_title: Prepare release v${{ env.VERSION }} (#${{ env.PULL_NUMBER }})
+        merge_method: squash
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PULL_NUMBER: ${{ steps.gprn.outputs.value }}
+        VERSION: ${{ steps.gv.outputs.version }}
+
+  build:
+    needs: prepare_version
+    env:
+      VERSION: ${{ needs.prepare_version.outputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        ref: master
+    - name: Setup Docker
+      uses: docker/setup-buildx-action@v1
+    - name: Login to Github Container registry
+      run: |
+        echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+    - name: Build and push image
+      uses: docker/build-push-action@v2
+      with:
+        context: .
+        push: true
+        tags: ghcr.io/${{ github.repository_owner }}/game-box-backend:${{ env.VERSION }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  create_release:
+    needs: [prepare_version, build]
+    env:
+      VERSION: ${{ needs.prepare_version.outputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        ref: master
+    - name: Get changelog
+      id: gcb
+      run: |
+        changelog_body=`scripts/get_changelog.py`
+        echo "changelog_body=${changelog_body}" >> $GITHUB_OUTPUT
+    - name: Create release draft
+      id: crd
+      uses: octokit/request-action@v2.x
+      with:
+        route: POST /repos/${{ github.repository }}/releases
+        tag_name: v${{ env.VERSION }}
+        target_commitish: master
+        name: v${{ env.VERSION }}
+        body: |-
+          ${{ steps.gcb.outputs.changelog_body }}
+        draft: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Get release number
+      id: grn
+      uses: sergeysova/jq-action@v2
+      with:
+        cmd: echo '${{ steps.crd.outputs.data }}' | jq .id -r
+      env:
+        JSON_DATA: ${{ steps.cpr.outputs.data }}
+    - name: Upload artifact
+      run: |
+        curl \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Content-Type: text/plain" \
+          --data-binary @hocfile.yaml \
+          https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=hocfile.yaml
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_ID: ${{ steps.grn.outputs.value }}
+    - name: Publish release
+      uses: octokit/request-action@v2.x
+      with:
+        route: PATCH /repos/${{ github.repository }}/releases/${{ env.RELEASE_ID }}
+        draft: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RELEASE_ID: ${{ steps.grn.outputs.value }}
