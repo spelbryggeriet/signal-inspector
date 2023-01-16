@@ -5,72 +5,116 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 html, body {
-  height: 100%;
+    height: 100%;
+    font-family: Verdana, Tahoma;
 }
 
 body {
-  margin: 0;
-  background: #0a0f0d;
+    margin: 0;
+    background: #0a0f0d;
 }
 
 .main-layout {
-  display: grid;
+    display: grid;
 
-  grid-template: 1fr 6fr 1fr / 1fr 6fr 1fr;
-  grid-template-areas:
+    grid-template: 1fr 6fr 1fr / 1fr 6fr 1fr;
+    grid-template-areas:
     ". control-board ."
     ". signal-view   ."
-    ". .             .";
+    ". labels        .";
 
-  width: 100vw;
-  height: 100vh;
+    width: 100vw;
+    height: 100vh;
 }
 
 .control-board {
-  grid-area: control-board;
+    grid-area: control-board;
 
-  padding-top: 10px;
-  padding-bottom: 10px;
-  width: 100%;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    width: 100%;
 
-  color: #c4cbca;
+    color: #c4cbca;
 }
 
-.control-board label {
-  display: inline-block;
-
-  padding: 5px 10px;
-  margin: 0;
-  border: 2px solid #c4cbca;
-  border-radius: 10px;
-  box-sizing: border-box;
-
-  color: #c4cbca;
+.control-board {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
 }
 
-.control-board label:hover {
-  color: #0a0f0d;
-  background-color: #c4cbca;
+.control-board label,
+.control-board button {
+    display: inline-block;
+
+    padding: 5px 10px;
+    margin: 0;
+
+    border: 2px solid #c4cbca;
+    border-radius: 10px;
+    box-sizing: border-box;
+
+    color: #c4cbca;
+    background: none;
+    font-size: 12pt;
+}
+
+.control-board label:hover,
+.control-board button:hover {
+    color: #0a0f0d;
+    background-color: #c4cbca;
 }
 
 .control-board input {
-  position: absolute;
-  z-index: -1;
+    position: absolute;
+    z-index: -1;
 
-  opacity: 0;
+    opacity: 0;
 }
 
 .signal-view {
-  grid-area: signal-view;
+    position: relative;
+    grid-area: signal-view;
+}
 
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
+.signal-view svg {
+    width: 100%;
+    height: 100%;
+    padding: 0 0 1.5% 0;
+    box-sizing: border-box;
+}
 
-  border: 2px solid #c4cbca;
-  fill: none;
-  stroke: #c4cbca;
-  stroke-width: 1px;
+.signal-view svg rect {
+    fill: none;
+    stroke: #c4cbca;
+    stroke-width: 2;
+}
+
+.signal-view svg path {
+    fill: none;
+    stroke: #c4cbca;
+    stroke-width: 1;
+}
+
+.signal-view svg path:first-child {
+    stroke: #ee4266;
+}
+
+.labels {
+    grid-area: labels;
+    position: relative;
+}
+
+.labels p {
+    display: inline;
+    position: absolute;
+    top: 3pt;
+
+    margin: 0;
+    min-width: 50px;
+
+    font-size: 12pt;
+    color: white;
 }
 </style>
   </head>
