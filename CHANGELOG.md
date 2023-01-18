@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2023-01-18
+
+Image tag: ghcr.io/spelbryggeriet/signal-inspector-backend:0.1.0
+
 ### Added
 
 - A basic sound signal and frequency inspector.
