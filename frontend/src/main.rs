@@ -14,6 +14,14 @@ struct ControlBoardProps {
     show_fft: bool,
 }
 
+fn decibel(amplitude: f32, reference: f32) -> f32 {
+    20.0 * (amplitude.abs() / reference.abs()).log10()
+}
+
+fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> f32 {
+    to_min + (value - from_min) / (from_max - from_min) * (to_max - to_min)
+}
+
 #[function_component(ControlBoard)]
 fn control_board(
     ControlBoardProps {
@@ -94,18 +102,21 @@ struct SignalViewProps {
 fn signal_view(
     SignalViewProps {
         left_samples,
-        right_samples,
         sample_rate,
         show_fft,
+        ..
     }: &SignalViewProps,
 ) -> Html {
+    const X_SCALE: f32 = 1.025;
+    const Y_SCALE: f32 = 1.0125;
+
     let samples = left_samples;
 
-    let len = samples.len();
+    let num_samples = samples.len();
 
     if *show_fft {
         let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(len);
+        let fft = planner.plan_fft_forward(num_samples);
 
         let mut transform: Vec<_> = samples
             .iter()
@@ -114,19 +125,19 @@ fn signal_view(
 
         fft.process(&mut transform);
         transform.truncate(transform.len() / 2);
-        let len = transform.len();
+        let num_usable_samples = transform.len();
 
-        let sample_rate_log = (*sample_rate as f32).log10();
+        let half_sample_rate_log = (*sample_rate as f32 / 2.0).log10();
 
-        let rms = (transform
+        let rms = (samples
             .iter()
-            .map(|&sample| sample.re * sample.re)
+            .map(|&sample| sample as f32 * sample as f32)
             .sum::<f32>()
-            / len as f32)
+            / num_usable_samples as f32)
             .sqrt();
-        let max_decibel = transform
+        let max_volume = transform
             .iter()
-            .map(|c| 20.0 * (c.re.abs() / rms).log10())
+            .map(|c| decibel(c.norm(), rms))
             .max_by(|x, y| {
                 x.partial_cmp(y).unwrap_or_else(|| {
                     if !x.is_nan() {
@@ -137,101 +148,87 @@ fn signal_view(
                 })
             })
             .unwrap_or(0.0);
-        let min_decibel = -72.0;
+        let min_volume = 0.0;
         let lines = transform
             .iter()
             .enumerate()
+            .skip(1)
             .map(|(frequency, &amplitude)| {
-                let frequency = frequency as f32 * *sample_rate as f32 / len as f32;
-                let mut frequency_log = frequency.log10() / sample_rate_log * *sample_rate as f32;
-                if frequency_log.is_infinite() {
-                    frequency_log = 0.0;
-                }
-                let decibel = 20.0 * (amplitude.re.abs() / rms).log10();
-
-                format!(
-                    "{frequency_log:.4} {:.4} ",
-                    (1.0 - (decibel - min_decibel) / (max_decibel - min_decibel)).min(1.0),
-                )
+                let frequency_log =
+                    (frequency as f32 * *sample_rate as f32 / num_samples as f32).log10();
+                let volume = decibel(amplitude.norm(), rms).max(min_volume);
+                format!("{frequency_log:.4} {:.4} ", -volume)
             })
             .collect::<String>();
 
         let order_of_magnitude = (*sample_rate as f32).log10().floor() as u32;
-        let ticks = (0..=order_of_magnitude)
+        let x_ticks = (0..=order_of_magnitude)
             .flat_map(|o| {
                 (1..10).map(move |i| {
-                    let f = i * 10_u32.pow(o);
-                    let mut frequency_log =
-                        (f as f32).log10() / sample_rate_log * *sample_rate as f32;
-                    if frequency_log.is_infinite() {
-                        frequency_log = 0.0;
-                    }
+                    let frequency_log = ((i * 10_u32.pow(o)) as f32).log10();
+                    let scaling = if i == 1 { 0.025 } else { 0.0 };
 
-                    let y_pos = if i == 1 { 1.025 } else { 1.0125 };
-                    format!("M {0} {y_pos} {0} 1 ", frequency_log)
+                    format!(
+                        "M {frequency_log} {} L {frequency_log} {:.4} ",
+                        -max_volume,
+                        -(min_volume - scaling * (max_volume - min_volume)),
+                    )
                 })
             })
             .collect::<String>();
 
-        let tick_labels = (0..=order_of_magnitude)
-            .map(|o| {
-                let f = 10_u32.pow(o);
-                let mut left = (f as f32).log10() / sample_rate_log * 100.0;
+        let x_tick_labels = (0..=order_of_magnitude)
+            .map(|order| {
+                let frequency = 10_u32.pow(order);
+                let mut left = map_range(
+                    (frequency as f32).log10(),
+                    0.0,
+                    half_sample_rate_log,
+                    0.0,
+                    100.0 / Y_SCALE,
+                );
                 if left.is_infinite() {
                     left = 0.0;
                 }
 
-                let text = format!("{} {}", 10_u32.pow(o % 3), if o < 3 { "Hz" } else { "kHz" });
+                let unit = if order < 3 { "hertz" } else { "kilohertz" };
 
                 html! {
                     <p
-                        style={format!("left: calc({left:.2}% - 5px)")}>
-                        {text}
+                        class={format!("unit {unit}")}
+                        style={format!("left: {left:.4}%")}>
+                        {format!("{}", 10_u32.pow(order % 3))}
                     </p>
                 }
             })
             .collect::<Html>();
 
-        html! {
-            <div class="signal-view">
-                <svg
-                    viewBox={format!("0 0 {sample_rate} 1")}
-                    xmlns="http://www.w3.org/2000/svg"
-                    preserveAspectRatio="none">
-                    <path vector-effect="non-scaling-stroke" d={format!("M 0 1 L {lines} {sample_rate} 1")} />
-                    <path vector-effect="non-scaling-stroke" d={ticks} />
-                    <rect vector-effect="non-scaling-stroke" width={sample_rate.to_string()} height="1" />
-                </svg>
-                <div class="labels">
-                    {tick_labels}
-                </div>
-            </div>
-        }
-    } else {
-        let max_amplitude = samples
-            .iter()
-            .map(|&sample| sample.unsigned_abs())
-            .max()
-            .unwrap_or(u16::MAX);
-        let lines = samples
-            .iter()
-            .enumerate()
-            .map(|(i, &amplitude)| format!("{i} {:.4} ", -amplitude as f32 / max_amplitude as f32))
+        let min_volume_tick = 3 * (min_volume / 3.0).ceil() as i32;
+        let max_volume_tick = 3 * (max_volume / 3.0).floor() as i32;
+        let volume_step =
+            3 * (1 + ((max_volume_tick - min_volume_tick) as f32).log10().floor() as usize);
+
+        let y_ticks = (min_volume_tick..=max_volume_tick)
+            .step_by(volume_step)
+            .map(|volume| {
+                format!(
+                    "M 0 {0:.4} L {1:.4} {0:.4} ",
+                    -volume,
+                    Y_SCALE * half_sample_rate_log,
+                )
+            })
             .collect::<String>();
 
-        let ticks = (0..=len)
-            .step_by(*sample_rate as usize)
-            .map(|second| format!("M {0} 2 L {0} 1 ", second))
-            .collect::<String>();
+        let y_tick_labels = (min_volume_tick..=max_volume_tick)
+            .step_by(volume_step)
+            .map(|volume| {
+                let top = map_range(volume as f32, max_volume, min_volume, 0.0, 100.0 / X_SCALE);
 
-        let tick_labels = (0..=len / *sample_rate as usize)
-            .map(|second| {
                 html! {
                     <p
-                        style={format!("left: calc({:.2}% - 5px)",
-                            second as f32 / len as f32 * *sample_rate as f32 * 100.0,
-                        )}>
-                        {format!("{second} s")}
+                        class="unit decibel"
+                        style={format!("top: {top:.4}%")}>
+                        {format!("{volume}")}
                     </p>
                 }
             })
@@ -240,32 +237,167 @@ fn signal_view(
         html! {
             <>
                 <div class="signal-view">
-                    <svg
-                        viewBox={format!("0 -1 {len} 2")}
-                        xmlns="http://www.w3.org/2000/svg"
-                        preserveAspectRatio="none">
-                        <path vector-effect="non-scaling-stroke" d={format!("M 0 0 L {lines} {len} 0")} />
-                        <path vector-effect="non-scaling-stroke" d={ticks} />
-                        <rect vector-effect="non-scaling-stroke" y="-1" width={len.to_string()} height="2" />
+                    <svg xmlns="http://www.w3.org/2000/svg">
+                        <svg
+                            viewBox={format!("0 {:.4} {:.4} {:.4}",
+                                -max_volume,
+                                Y_SCALE * half_sample_rate_log,
+                                X_SCALE * (max_volume - min_volume),
+                            )}
+                            preserveAspectRatio="none">
+                            <path vector-effect="non-scaling-stroke" d={x_ticks} />
+                            <path vector-effect="non-scaling-stroke" d={y_ticks} />
+                            <path vector-effect="non-scaling-stroke"
+                                d={format!("M 0 0 L {lines} {half_sample_rate_log:.4} 0")} />
+                            <rect vector-effect="non-scaling-stroke"
+                                y={format!("{:.4}", -max_volume)}
+                                width={format!("{half_sample_rate_log:.4}")}
+                                height={format!("{:.4}", max_volume - min_volume)} />
+                        </svg>
                     </svg>
                 </div>
-                <div class="labels">
-                    {tick_labels}
+                <div class="x-labels">
+                    {x_tick_labels}
                 </div>
+                <div class="y-labels">
+                    {y_tick_labels}
+                </div>
+                <div class="empty-box" />
+            </>
+        }
+    } else {
+        let max_amplitude = samples.iter().cloned().max().unwrap_or(i16::MAX) as i32;
+        let min_amplitude = samples.iter().cloned().min().unwrap_or(i16::MIN) as i32;
+
+        let lines = samples
+            .iter()
+            .enumerate()
+            .map(|(i, &amplitude)| format!("{i} {:} ", -(amplitude as i32)))
+            .collect::<String>();
+
+        let x_ticks = (0..=num_samples)
+            .step_by(*sample_rate as usize)
+            .map(|sample| {
+                format!(
+                    "M {sample} {} L {sample} {:.2} ",
+                    -max_amplitude,
+                    1.05 * (max_amplitude - min_amplitude) as f32,
+                )
+            })
+            .collect::<String>();
+
+        let x_tick_labels = (0..=num_samples)
+            .step_by(*sample_rate as usize)
+            .map(|sample| {
+                let left = map_range(
+                    sample as f32,
+                    0.0,
+                    (num_samples) as f32,
+                    0.0,
+                    100.0 / Y_SCALE,
+                );
+
+                html! {
+                    <p
+                        class="unit second"
+                        style={format!("left: {left:.4}%")}>
+                        {format!("{}", sample / *sample_rate as usize)}
+                    </p>
+                }
+            })
+            .collect::<Html>();
+
+        let y_ticks = [min_amplitude, 0, max_amplitude]
+            .into_iter()
+            .map(|amplitude| {
+                format!(
+                    "M 0 {0} L {1} {0} ",
+                    -amplitude,
+                    X_SCALE * num_samples as f32
+                )
+            })
+            .collect::<String>();
+
+        let y_tick_labels = [min_amplitude, 0, max_amplitude]
+            .into_iter()
+            .map(|amplitude| {
+                let top = map_range(
+                    amplitude as f32,
+                    max_amplitude as f32,
+                    min_amplitude as f32,
+                    0.0,
+                    100.0 / X_SCALE,
+                );
+                let display = if amplitude == 0 {
+                    0.0
+                } else {
+                    map_range(
+                        amplitude as f32,
+                        i16::MIN as f32,
+                        i16::MAX as f32,
+                        -100.0,
+                        100.0,
+                    )
+                };
+
+                html! {
+                    <p
+                        class="unit percentage"
+                        style={format!("top: {top:.4}%")}>
+                        {format!("{display:.0}")}
+                    </p>
+                }
+            })
+            .collect::<Html>();
+
+        html! {
+            <>
+                <div class="signal-view">
+                    <svg xmlns="http://www.w3.org/2000/svg">
+                        <svg
+                            viewBox={format!("0 {} {:.4} {:.4}",
+                                -max_amplitude,
+                                Y_SCALE * num_samples as f32,
+                                X_SCALE * (max_amplitude - min_amplitude) as f32,
+                            )}
+                            preserveAspectRatio="none">
+                            <path vector-effect="non-scaling-stroke" d={x_ticks} />
+                            <path vector-effect="non-scaling-stroke" d={y_ticks} />
+                            <path vector-effect="non-scaling-stroke"
+                                d={format!("M 0 0 L {lines} {num_samples} 0")} />
+                            <rect vector-effect="non-scaling-stroke"
+                                y={format!("{}", -max_amplitude)}
+                                width={num_samples.to_string()}
+                                height={format!("{}", (max_amplitude - min_amplitude))} />
+                        </svg>
+                    </svg>
+                </div>
+                <div class="x-labels">
+                    {x_tick_labels}
+                </div>
+                <div class="y-labels">
+                    {y_tick_labels}
+                </div>
+                <div class="empty-box" />
             </>
         }
     }
 }
 
-#[function_component]
-fn MainLayout() -> Html {
+#[function_component(App)]
+fn app() -> Html {
     let samples = use_state(|| {
         let frequency = 5;
         let sample_rate = 44100;
-        let wave = (0..9 * sample_rate / 8)
+        let wave = (0..sample_rate)
             .map(|i| {
-                ((2.0 * PI * frequency as f32 * i as f32 / sample_rate as f32).sin()
-                    * i16::MAX as f32) as i16
+                map_range(
+                    (2.0 * PI * frequency as f32 * i as f32 / sample_rate as f32).sin(),
+                    -1.0,
+                    1.0,
+                    i16::MIN as f32,
+                    i16::MAX as f32,
+                ) as i16
             })
             .collect::<Vec<_>>();
         (wave.clone(), wave, sample_rate)
@@ -285,7 +417,7 @@ fn MainLayout() -> Html {
     };
 
     html! {
-        <div class="main-layout">
+        <div class="app">
             <ControlBoard on_loaded={on_loaded} on_fft={on_fft} show_fft={*show_fft} />
             <SignalView
                 left_samples={samples.0.clone()}
@@ -297,5 +429,5 @@ fn MainLayout() -> Html {
 }
 
 fn main() {
-    yew::Renderer::<MainLayout>::new().render();
+    yew::Renderer::<App>::new().render();
 }

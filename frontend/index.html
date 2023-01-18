@@ -14,14 +14,14 @@ body {
     background: #0a0f0d;
 }
 
-.main-layout {
+.app {
     display: grid;
 
     grid-template: 1fr 6fr 1fr / 1fr 6fr 1fr;
     grid-template-areas:
-    ". control-board ."
-    ". signal-view   ."
-    ". labels        .";
+        ". control-board .        "
+        ". signal-view   y-labels "
+        ". x-labels      empty-box";
 
     width: 100vw;
     height: 100vh;
@@ -80,7 +80,6 @@ body {
 .signal-view svg {
     width: 100%;
     height: 100%;
-    padding: 0 0 1.5% 0;
     box-sizing: border-box;
 }
 
@@ -96,26 +95,76 @@ body {
     stroke-width: 1;
 }
 
-.signal-view svg path:first-child {
+.signal-view svg path:first-child,
+.signal-view svg path:nth-child(2) {
+    opacity: 25%;
+}
+
+.signal-view svg path:nth-child(3) {
     stroke: #ee4266;
 }
 
-.labels {
-    grid-area: labels;
+.x-labels {
+    grid-area: x-labels;
     position: relative;
 }
 
-.labels p {
-    display: inline;
+.x-labels p {
     position: absolute;
     top: 3pt;
+    transform: translateX(-50%);
+}
 
+p.unit::after {
+    position: absolute;
+    left: calc(100% + 0.5ex);
+    content: "";
+}
+
+.y-labels {
+    grid-area: y-labels;
+    position: relative;
+}
+
+.y-labels p {
+    position: absolute;
+    left: 3pt;
+    transform: translateY(-50%);
+}
+
+.x-labels p,
+.y-labels p {
     margin: 0;
-    min-width: 50px;
+    display: inline;
 
     font-size: 12pt;
     color: white;
 }
+
+.empty-box {
+    grid-area: empty-box;
+}
+
+p.unit.second::after {
+    content: "s";
+}
+
+p.unit.percentage::after {
+    content: "%";
+}
+
+p.unit.hertz::after {
+    content: "Hz";
+}
+
+p.unit.kilohertz::after {
+    content: "kHz";
+}
+
+p.unit.decibel::after {
+    content: "dB";
+}
+
 </style>
   </head>
   <body>
