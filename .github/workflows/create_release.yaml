@@ -49,7 +49,7 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: update
-        args: --package game-box-backend --package game-box-frontend
+        args: --package signal-inspector-backend --package signal-inspector-frontend
     - name: Create release branch
       if: inputs.bumpVersion != 'skip'
       id: crb
@@ -120,7 +120,7 @@ jobs:
       with:
         context: .
         push: true
-        tags: ghcr.io/${{ github.repository_owner }}/game-box-backend:${{ env.VERSION }}
+        tags: ghcr.io/${{ github.repository_owner }}/signal-inspector-backend:${{ env.VERSION }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
