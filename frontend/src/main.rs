@@ -1,17 +1,23 @@
-use std::cmp::Ordering;
-use std::f32::consts::PI;
-use std::io::Cursor;
+use std::{cmp::Ordering, f32::consts::PI, io::Cursor};
 
 use gloo::file::File;
+use im::Vector;
 use rustfft::{num_complex::Complex, FftPlanner};
+use wasm_bindgen::prelude::*;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
-#[derive(Properties, PartialEq)]
-struct ControlBoardProps {
-    on_loaded: Callback<(Vec<i16>, Vec<i16>, u32)>,
-    on_fft: Callback<()>,
-    show_fft: bool,
+use model::StereoSignal;
+
+#[macro_use]
+mod bench;
+
+mod model;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
 }
 
 fn decibel(amplitude: f32, reference: f32) -> f32 {
@@ -20,6 +26,13 @@ fn decibel(amplitude: f32, reference: f32) -> f32 {
 
 fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> f32 {
     to_min + (value - from_min) / (from_max - from_min) * (to_max - to_min)
+}
+
+#[derive(Properties, PartialEq)]
+struct ControlBoardProps {
+    on_loaded: Callback<StereoSignal>,
+    on_fft: Callback<()>,
+    show_fft: bool,
 }
 
 #[function_component(ControlBoard)]
@@ -34,36 +47,43 @@ fn control_board(
     let on_change = {
         let on_loaded = on_loaded.clone();
         Callback::from(move |event: Event| {
-            let file: web_sys::File = event
-                .target_unchecked_into::<HtmlInputElement>()
-                .files()
-                .unwrap()
-                .get(0)
-                .unwrap();
-            let file = File::from(file);
-            let on_loaded = on_loaded.clone();
-            let reader = gloo::file::callbacks::read_as_bytes(&file, move |res| {
-                let data = res.unwrap();
-                let reader = hound::WavReader::new(Cursor::new(data)).unwrap();
-                let spec = reader.spec();
-
-                let mut is_left = true;
-                let (left_channel, right_channel) = reader
-                    .into_samples::<i16>()
-                    .try_fold((Vec::new(), Vec::new()), |mut acc, sample| {
-                        let sample = sample?;
-                        if is_left {
-                            acc.0.push(sample)
-                        } else {
-                            acc.1.push(sample)
-                        }
-                        is_left = !is_left;
-                        Result::<_, hound::Error>::Ok(acc)
-                    })
+            bench!(["Reading file"] => {
+                let file: web_sys::File = event
+                    .target_unchecked_into::<HtmlInputElement>()
+                    .files()
+                    .unwrap()
+                    .get(0)
                     .unwrap();
-                on_loaded.emit((left_channel, right_channel, spec.sample_rate));
-            });
-            file_reader.set(Some(reader));
+                let file = File::from(file);
+                let on_loaded = on_loaded.clone();
+                let reader = gloo::file::callbacks::read_as_bytes(&file, move |res| {
+                    let data = res.unwrap();
+                    let reader = hound::WavReader::new(Cursor::new(data)).unwrap();
+                    let spec = reader.spec();
+
+                    let mut is_left = true;
+                    let (left_channel, right_channel) = reader
+                        .into_samples::<i16>()
+                        .try_fold((Vec::new(), Vec::new()), |mut acc, sample| {
+                            let sample = sample?;
+                            if is_left {
+                                acc.0.push(sample)
+                            } else {
+                                acc.1.push(sample)
+                            }
+                            is_left = !is_left;
+                            Result::<_, hound::Error>::Ok(acc)
+                        })
+                        .unwrap();
+
+                    on_loaded.emit(StereoSignal::new(
+                        Vector::from(left_channel),
+                        Vector::from(right_channel),
+                        spec.sample_rate,
+                    ));
+                });
+                file_reader.set(Some(reader));
+            })
         })
     };
     let on_click = {
@@ -92,8 +112,7 @@ fn control_board(
 
 #[derive(Properties, PartialEq)]
 struct SignalViewProps {
-    left_samples: Vec<i16>,
-    right_samples: Vec<i16>,
+    samples: Vector<i16>,
     sample_rate: u32,
     show_fft: bool,
 }
@@ -101,41 +120,55 @@ struct SignalViewProps {
 #[function_component(SignalView)]
 fn signal_view(
     SignalViewProps {
-        left_samples,
+        samples,
         sample_rate,
         show_fft,
-        ..
     }: &SignalViewProps,
 ) -> Html {
     const X_SCALE: f32 = 1.025;
     const Y_SCALE: f32 = 1.0125;
 
-    let samples = left_samples;
+    bench_start!("Preparing signal view");
 
     let num_samples = samples.len();
 
+    let fft = use_memo(
+        |_| FftPlanner::<f32>::new().plan_fft_forward(num_samples),
+        num_samples,
+    );
+    let transform = use_memo(
+        |_| {
+            let mut transform: Vec<_> = samples
+                .iter()
+                .map(|sample| Complex::from(*sample as f32))
+                .collect();
+
+            bench!(["Calculating FFT"] => fft.process(&mut transform));
+
+            transform.truncate(transform.len() / 2);
+            transform
+        },
+        samples.clone(),
+    );
+
+    bench_end!();
+
     if *show_fft {
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(num_samples);
+        bench_start!("Preparing frequency view");
 
-        let mut transform: Vec<_> = samples
-            .iter()
-            .map(|sample| Complex::from(*sample as f32))
-            .collect();
-
-        fft.process(&mut transform);
-        transform.truncate(transform.len() / 2);
         let num_usable_samples = transform.len();
-
         let half_sample_rate_log = (*sample_rate as f32 / 2.0).log10();
 
-        let rms = (samples
-            .iter()
-            .map(|&sample| sample as f32 * sample as f32)
-            .sum::<f32>()
-            / num_usable_samples as f32)
-            .sqrt();
-        let max_volume = transform
+        let rms = bench!(["Calculating RMS"] => {
+            let square_sum = samples
+                .iter()
+                .map(|&sample| sample as f32 * sample as f32)
+                .sum::<f32>();
+
+            (square_sum / num_usable_samples as f32).sqrt()
+        });
+
+        let max_volume = bench!(["Calculating max volume"] => transform
             .iter()
             .map(|c| decibel(c.norm(), rms))
             .max_by(|x, y| {
@@ -147,9 +180,9 @@ fn signal_view(
                     }
                 })
             })
-            .unwrap_or(0.0);
+            .unwrap_or(0.0));
         let min_volume = 0.0;
-        let lines = transform
+        let lines = bench!(["Formatting frequency lines"] => transform
             .iter()
             .enumerate()
             .skip(1)
@@ -159,10 +192,10 @@ fn signal_view(
                 let volume = decibel(amplitude.norm(), rms).max(min_volume);
                 format!("{frequency_log:.4} {:.4} ", -volume)
             })
-            .collect::<String>();
+            .collect::<String>());
 
         let order_of_magnitude = (*sample_rate as f32).log10().floor() as u32;
-        let x_ticks = (0..=order_of_magnitude)
+        let x_ticks = bench!(["Formatting X ticks"] => (0..=order_of_magnitude)
             .flat_map(|o| {
                 (1..10).map(move |i| {
                     let frequency_log = ((i * 10_u32.pow(o)) as f32).log10();
@@ -175,9 +208,9 @@ fn signal_view(
                     )
                 })
             })
-            .collect::<String>();
+            .collect::<String>());
 
-        let x_tick_labels = (0..=order_of_magnitude)
+        let x_tick_labels = bench!(["Rendering X tick labels"] => (0..=order_of_magnitude)
             .map(|order| {
                 let frequency = 10_u32.pow(order);
                 let mut left = map_range(
@@ -201,14 +234,14 @@ fn signal_view(
                     </p>
                 }
             })
-            .collect::<Html>();
+            .collect::<Html>());
 
         let min_volume_tick = 3 * (min_volume / 3.0).ceil() as i32;
         let max_volume_tick = 3 * (max_volume / 3.0).floor() as i32;
         let volume_step =
             3 * (1 + ((max_volume_tick - min_volume_tick) as f32).log10().floor() as usize);
 
-        let y_ticks = (min_volume_tick..=max_volume_tick)
+        let y_ticks = bench!(["Formatting Y ticks"] => (min_volume_tick..=max_volume_tick)
             .step_by(volume_step)
             .map(|volume| {
                 format!(
@@ -217,9 +250,9 @@ fn signal_view(
                     Y_SCALE * half_sample_rate_log,
                 )
             })
-            .collect::<String>();
+            .collect::<String>());
 
-        let y_tick_labels = (min_volume_tick..=max_volume_tick)
+        let y_tick_labels = bench!(["Rendering Y tick labels"] => (min_volume_tick..=max_volume_tick)
             .step_by(volume_step)
             .map(|volume| {
                 let top = map_range(volume as f32, max_volume, min_volume, 0.0, 100.0 / X_SCALE);
@@ -232,7 +265,9 @@ fn signal_view(
                     </p>
                 }
             })
-            .collect::<Html>();
+            .collect::<Html>());
+
+        bench_end!();
 
         html! {
             <>
@@ -266,16 +301,18 @@ fn signal_view(
             </>
         }
     } else {
-        let max_amplitude = samples.iter().cloned().max().unwrap_or(i16::MAX) as i32;
-        let min_amplitude = samples.iter().cloned().min().unwrap_or(i16::MIN) as i32;
+        bench_start!("Preparing sample view");
 
-        let lines = samples
+        let max_amplitude = bench!(["Calculating max amplitude"] => samples.iter().cloned().max().unwrap_or(i16::MAX) as i32);
+        let min_amplitude = bench!(["Calculating min amplitude"] => samples.iter().cloned().min().unwrap_or(i16::MIN) as i32);
+
+        let lines = bench!(["Formatting sample lines"] => samples
             .iter()
             .enumerate()
             .map(|(i, &amplitude)| format!("{i} {:} ", -(amplitude as i32)))
-            .collect::<String>();
+            .collect::<String>());
 
-        let x_ticks = (0..=num_samples)
+        let x_ticks = bench!(["Formatting X ticks"] => (0..=num_samples)
             .step_by(*sample_rate as usize)
             .map(|sample| {
                 format!(
@@ -284,9 +321,9 @@ fn signal_view(
                     1.05 * (max_amplitude - min_amplitude) as f32,
                 )
             })
-            .collect::<String>();
+            .collect::<String>());
 
-        let x_tick_labels = (0..=num_samples)
+        let x_tick_labels = bench!(["Rendering X tick labels"] => (0..=num_samples)
             .step_by(*sample_rate as usize)
             .map(|sample| {
                 let left = map_range(
@@ -305,9 +342,9 @@ fn signal_view(
                     </p>
                 }
             })
-            .collect::<Html>();
+            .collect::<Html>());
 
-        let y_ticks = [min_amplitude, 0, max_amplitude]
+        let y_ticks = bench!(["Formatting Y ticks"] => [min_amplitude, 0, max_amplitude]
             .into_iter()
             .map(|amplitude| {
                 format!(
@@ -316,9 +353,9 @@ fn signal_view(
                     X_SCALE * num_samples as f32
                 )
             })
-            .collect::<String>();
+            .collect::<String>());
 
-        let y_tick_labels = [min_amplitude, 0, max_amplitude]
+        let y_tick_labels = bench!(["Rendering Y tick labels"] => [min_amplitude, 0, max_amplitude]
             .into_iter()
             .map(|amplitude| {
                 let top = map_range(
@@ -348,7 +385,9 @@ fn signal_view(
                     </p>
                 }
             })
-            .collect::<Html>();
+            .collect::<Html>());
+
+        bench_end!();
 
         html! {
             <>
@@ -386,27 +425,31 @@ fn signal_view(
 
 #[function_component(App)]
 fn app() -> Html {
-    let samples = use_state(|| {
-        let frequency = 5;
-        let sample_rate = 44100;
-        let wave = (0..sample_rate)
-            .map(|i| {
-                map_range(
-                    (2.0 * PI * frequency as f32 * i as f32 / sample_rate as f32).sin(),
-                    -1.0,
-                    1.0,
-                    i16::MIN as f32,
-                    i16::MAX as f32,
-                ) as i16
-            })
-            .collect::<Vec<_>>();
-        (wave.clone(), wave, sample_rate)
+    bench_start!("Preparing app");
+
+    let stereo_signal = use_state(|| {
+        bench!(["Generating default stereo signal"] => {
+            let frequency = 5;
+            let sample_rate = 44100;
+            let wave = (0..sample_rate)
+                .map(|i| {
+                    map_range(
+                        (2.0 * PI * frequency as f32 * i as f32 / sample_rate as f32).sin(),
+                        -1.0,
+                        1.0,
+                        i16::MIN as f32,
+                        i16::MAX as f32,
+                    ) as i16
+                })
+                .collect::<im::Vector<_>>();
+            StereoSignal::new(wave.clone(), wave, sample_rate)
+        })
     });
     let show_fft = use_state(|| false);
     let on_loaded = {
-        let samples = samples.clone();
-        Callback::from(move |samples_data| {
-            samples.set(samples_data);
+        let stereo_signal = stereo_signal.clone();
+        Callback::from(move |new_stereo_signal| {
+            stereo_signal.set(new_stereo_signal);
         })
     };
     let on_fft = {
@@ -416,13 +459,14 @@ fn app() -> Html {
         })
     };
 
+    bench_end!();
+
     html! {
         <div class="app">
             <ControlBoard on_loaded={on_loaded} on_fft={on_fft} show_fft={*show_fft} />
             <SignalView
-                left_samples={samples.0.clone()}
-                right_samples={samples.1.clone()}
-                sample_rate={samples.2}
+                samples={stereo_signal.left.clone()}
+                sample_rate={stereo_signal.sample_rate}
                 show_fft={*show_fft} />
         </div>
     }
