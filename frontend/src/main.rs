@@ -168,6 +168,51 @@ fn signal_view(
             (square_sum / num_usable_samples as f32).sqrt()
         });
 
+        let centroid = bench!(["Calculating centroid"] => {
+            let numerator: f32 = transform
+                .iter()
+                .enumerate()
+                .map(|(n, c)| {
+                    let frequency = n as f32 * *sample_rate as f32 / num_samples as f32;
+                    let magnitude = c.norm();
+                    frequency * magnitude
+                })
+                .sum();
+            let denominator: f32 = transform
+                .iter()
+                .map(|c| c.norm())
+                .sum();
+            numerator / denominator
+        });
+        let centroid_log = centroid.log10();
+
+        let centroid_label = bench!(["Rendering centroid label"] => {
+            let top = map_range(0.5, 0.0, 1.0, 0.0, 100.0 / X_SCALE);
+            let mut left = map_range(
+                centroid_log,
+                0.0,
+                half_sample_rate_log,
+                0.0,
+                100.0 / Y_SCALE);
+            if left.is_infinite() {
+                left = 0.0;
+            }
+
+            let translate_x = if left > 50.0 {
+                "calc(-100% - 6px)"
+            } else {
+                "6px"
+            };
+
+            html! {
+                <p style={format!("top: {top:.4}%;\
+                                   left: {left:.4}%;\
+                                   transform: translate({translate_x}, -50%)")}>
+                    {format!("Centroid = {centroid:.0} Hz")}
+                </p>
+            }
+        });
+
         let max_volume = bench!(["Calculating max volume"] => transform
             .iter()
             .map(|c| decibel(c.norm(), rms))
@@ -186,9 +231,9 @@ fn signal_view(
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(frequency, &amplitude)| {
+            .map(|(n, &amplitude)| {
                 let frequency_log =
-                    (frequency as f32 * *sample_rate as f32 / num_samples as f32).log10();
+                    (n as f32 * *sample_rate as f32 / num_samples as f32).log10();
                 let volume = decibel(amplitude.norm(), rms).max(min_volume);
                 format!("{frequency_log:.4} {:.4} ", -volume)
             })
@@ -284,12 +329,19 @@ fn signal_view(
                             <path vector-effect="non-scaling-stroke" d={y_ticks} />
                             <path vector-effect="non-scaling-stroke"
                                 d={format!("M 0 0 L {lines} {half_sample_rate_log:.4} 0")} />
+                            <path vector-effect="non-scaling-stroke"
+                                d={format!("M {0:.4} {1:.4} L {0:.4} {2:.4}",
+                                    centroid_log,
+                                    -min_volume,
+                                    -(max_volume - min_volume) / 2.0,
+                                )} />
                             <rect vector-effect="non-scaling-stroke"
                                 y={format!("{:.4}", -max_volume)}
                                 width={format!("{half_sample_rate_log:.4}")}
                                 height={format!("{:.4}", max_volume - min_volume)} />
                         </svg>
                     </svg>
+                    {centroid_label}
                 </div>
                 <div class="x-labels">
                     {x_tick_labels}
