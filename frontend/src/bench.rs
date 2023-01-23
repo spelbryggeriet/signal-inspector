@@ -73,7 +73,7 @@ macro_rules! bench_end {
 
 #[cfg(not(debug_assertions))]
 macro_rules! bench {
-    ([$($t:tt)*] $e:expr) => {
+    ([$($t:tt)*] => $e:expr) => {
         $e
     };
 }
