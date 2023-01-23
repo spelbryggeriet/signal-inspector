@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2023-01-23
+
+Image tag: ghcr.io/spelbryggeriet/signal-inspector-backend:0.2.0
+
 ### Added
 
 - Spectral centroid is now calculated in the frequency view.
