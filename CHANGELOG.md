@@ -14,6 +14,7 @@ Image tag: ghcr.io/spelbryggeriet/signal-inspector-backend:0.2.0
 ### Added
 
 - Spectral centroid is now calculated in the frequency view.
+- More WAV formats are now supported (8-bit, 16-bit, 32-bit, integer / float representation).
 
 ## [0.1.0] - 2023-01-18
 
