@@ -296,8 +296,7 @@ impl Ord for Sample {
             (Self::Int32(left), Self::Int32(right)) => left.cmp(right),
             (Self::Float32(left), Self::Float32(right)) => left
                 .partial_cmp(right)
-                .or_else(|| right.is_nan().then_some(Ordering::Greater))
-                .unwrap_or(Ordering::Less),
+                .unwrap_or_else(|| panic!("undefined comparison: {left} <> {right}")),
             (left, right) => panic!("undefined comparison: {left:?} <> {right:?}"),
         }
     }
