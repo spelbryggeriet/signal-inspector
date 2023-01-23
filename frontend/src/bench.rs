@@ -1,8 +1,6 @@
-use std::sync::Mutex;
-
 #[cfg(debug_assertions)]
 thread_local! {
-    pub static TIMESTAMPS: Mutex<Vec<(f64, String, bool)>> = Mutex::new(Vec::with_capacity(16));
+    pub static TIMESTAMPS: std::sync::Mutex<Vec<(f64, String, bool)>> = std::sync::Mutex::new(Vec::with_capacity(16));
 }
 
 #[cfg(debug_assertions)]
