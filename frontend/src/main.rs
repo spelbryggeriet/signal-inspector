@@ -1,13 +1,12 @@
-use std::{cmp::Ordering, f32::consts::PI, io::Cursor};
+use std::{cmp::Ordering, f64::consts::PI};
 
 use gloo::file::File;
-use im::Vector;
 use rustfft::{num_complex::Complex, FftPlanner};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
-use model::StereoSignal;
+use model::{Channel, Signal};
 
 #[macro_use]
 mod bench;
@@ -20,17 +19,18 @@ extern "C" {
     fn log(s: &str);
 }
 
-fn decibel(amplitude: f32, reference: f32) -> f32 {
+fn decibel(amplitude: f64, reference: f64) -> f64 {
     20.0 * (amplitude.abs() / reference.abs()).log10()
 }
 
-fn map_range(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> f32 {
-    to_min + (value - from_min) / (from_max - from_min) * (to_max - to_min)
+fn map_range<T: Into<f64>>(value: T, from_min: T, from_max: T, to_min: f64, to_max: f64) -> f64 {
+    let from_min = from_min.into();
+    to_min + (value.into() - from_min) / (from_max.into() - from_min) * (to_max - to_min)
 }
 
 #[derive(Properties, PartialEq)]
 struct ControlBoardProps {
-    on_loaded: Callback<StereoSignal>,
+    on_loaded: Callback<Signal>,
     on_fft: Callback<()>,
     show_fft: bool,
 }
@@ -57,30 +57,7 @@ fn control_board(
                 let file = File::from(file);
                 let on_loaded = on_loaded.clone();
                 let reader = gloo::file::callbacks::read_as_bytes(&file, move |res| {
-                    let data = res.unwrap();
-                    let reader = hound::WavReader::new(Cursor::new(data)).unwrap();
-                    let spec = reader.spec();
-
-                    let mut is_left = true;
-                    let (left_channel, right_channel) = reader
-                        .into_samples::<i16>()
-                        .try_fold((Vec::new(), Vec::new()), |mut acc, sample| {
-                            let sample = sample?;
-                            if is_left {
-                                acc.0.push(sample)
-                            } else {
-                                acc.1.push(sample)
-                            }
-                            is_left = !is_left;
-                            Result::<_, hound::Error>::Ok(acc)
-                        })
-                        .unwrap();
-
-                    on_loaded.emit(StereoSignal::new(
-                        Vector::from(left_channel),
-                        Vector::from(right_channel),
-                        spec.sample_rate,
-                    ));
+                    on_loaded.emit(Signal::from_wav(res.unwrap()).unwrap());
                 });
                 file_reader.set(Some(reader));
             })
@@ -112,7 +89,7 @@ fn control_board(
 
 #[derive(Properties, PartialEq)]
 struct SignalViewProps {
-    samples: Vector<i16>,
+    channel: Channel,
     sample_rate: u32,
     show_fft: bool,
 }
@@ -120,27 +97,27 @@ struct SignalViewProps {
 #[function_component(SignalView)]
 fn signal_view(
     SignalViewProps {
-        samples,
+        channel,
         sample_rate,
         show_fft,
     }: &SignalViewProps,
 ) -> Html {
-    const X_SCALE: f32 = 1.025;
-    const Y_SCALE: f32 = 1.0125;
+    const X_SCALE: f64 = 1.025;
+    const Y_SCALE: f64 = 1.0125;
 
     bench_start!("Preparing signal view");
 
-    let num_samples = samples.len();
+    let num_samples = channel.count();
 
     let fft = use_memo(
-        |_| FftPlanner::<f32>::new().plan_fft_forward(num_samples),
+        |_| FftPlanner::<f64>::new().plan_fft_forward(num_samples),
         num_samples,
     );
     let transform = use_memo(
         |_| {
-            let mut transform: Vec<_> = samples
+            let mut transform: Vec<_> = channel
                 .iter()
-                .map(|sample| Complex::from(*sample as f32))
+                .map(|sample| Complex::from(f64::from(sample)))
                 .collect();
 
             bench!(["Calculating FFT"] => fft.process(&mut transform));
@@ -148,7 +125,7 @@ fn signal_view(
             transform.truncate(transform.len() / 2);
             transform
         },
-        samples.clone(),
+        channel.clone(),
     );
 
     bench_end!();
@@ -157,28 +134,28 @@ fn signal_view(
         bench_start!("Preparing frequency view");
 
         let num_usable_samples = transform.len();
-        let half_sample_rate_log = (*sample_rate as f32 / 2.0).log10();
+        let half_sample_rate_log = (*sample_rate as f64 / 2.0).log10();
 
         let rms = bench!(["Calculating RMS"] => {
-            let square_sum = samples
+            let square_sum = channel
                 .iter()
-                .map(|&sample| sample as f32 * sample as f32)
-                .sum::<f32>();
+                .map(|sample| f64::from(sample) * f64::from(sample))
+                .sum::<f64>();
 
-            (square_sum / num_usable_samples as f32).sqrt()
+            (square_sum / num_usable_samples as f64).sqrt()
         });
 
         let centroid = bench!(["Calculating centroid"] => {
-            let numerator: f32 = transform
+            let numerator: f64 = transform
                 .iter()
                 .enumerate()
                 .map(|(n, c)| {
-                    let frequency = n as f32 * *sample_rate as f32 / num_samples as f32;
+                    let frequency = n as f64 * *sample_rate as f64 / num_samples as f64;
                     let magnitude = c.norm();
                     frequency * magnitude
                 })
                 .sum();
-            let denominator: f32 = transform
+            let denominator: f64 = transform
                 .iter()
                 .map(|c| c.norm())
                 .sum();
@@ -233,7 +210,7 @@ fn signal_view(
             .skip(1)
             .map(|(n, &amplitude)| {
                 let frequency_log =
-                    (n as f32 * *sample_rate as f32 / num_samples as f32).log10();
+                    (n as f64 * *sample_rate as f64 / num_samples as f64).log10();
                 let volume = decibel(amplitude.norm(), rms).max(min_volume);
                 format!("{frequency_log:.4} {:.4} ", -volume)
             })
@@ -243,7 +220,7 @@ fn signal_view(
         let x_ticks = bench!(["Formatting X ticks"] => (0..=order_of_magnitude)
             .flat_map(|o| {
                 (1..10).map(move |i| {
-                    let frequency_log = ((i * 10_u32.pow(o)) as f32).log10();
+                    let frequency_log = ((i * 10_u32.pow(o)) as f64).log10();
                     let scaling = if i == 1 { 0.025 } else { 0.0 };
 
                     format!(
@@ -259,7 +236,7 @@ fn signal_view(
             .map(|order| {
                 let frequency = 10_u32.pow(order);
                 let mut left = map_range(
-                    (frequency as f32).log10(),
+                    (frequency as f64).log10(),
                     0.0,
                     half_sample_rate_log,
                     0.0,
@@ -281,10 +258,10 @@ fn signal_view(
             })
             .collect::<Html>());
 
-        let min_volume_tick = 3 * (min_volume / 3.0).ceil() as i32;
-        let max_volume_tick = 3 * (max_volume / 3.0).floor() as i32;
+        let min_volume_tick = 3 * (min_volume / 3.0).ceil() as i64;
+        let max_volume_tick = 3 * (max_volume / 3.0).floor() as i64;
         let volume_step =
-            3 * (1 + ((max_volume_tick - min_volume_tick) as f32).log10().floor() as usize);
+            3 * (1 + ((max_volume_tick - min_volume_tick) as f64).log10().floor() as usize);
 
         let y_ticks = bench!(["Formatting Y ticks"] => (min_volume_tick..=max_volume_tick)
             .step_by(volume_step)
@@ -300,7 +277,7 @@ fn signal_view(
         let y_tick_labels = bench!(["Rendering Y tick labels"] => (min_volume_tick..=max_volume_tick)
             .step_by(volume_step)
             .map(|volume| {
-                let top = map_range(volume as f32, max_volume, min_volume, 0.0, 100.0 / X_SCALE);
+                let top = map_range(volume as f64, max_volume, min_volume, 0.0, 100.0 / X_SCALE);
 
                 html! {
                     <p
@@ -355,22 +332,34 @@ fn signal_view(
     } else {
         bench_start!("Preparing sample view");
 
-        let max_amplitude = bench!(["Calculating max amplitude"] => samples.iter().cloned().max().unwrap_or(i16::MAX) as i32);
-        let min_amplitude = bench!(["Calculating min amplitude"] => samples.iter().cloned().min().unwrap_or(i16::MIN) as i32);
+        let sample_lower_bound = channel.lower_bound();
+        let sample_upper_bound = channel.upper_bound();
+        let max_amplitude = bench!(["Calculating max amplitude"] => channel
+            .iter()
+            .max()
+            .unwrap_or(sample_upper_bound)
+        );
+        let min_amplitude = bench!(["Calculating min amplitude"] => channel
+            .iter()
+            .min()
+            .unwrap_or(sample_lower_bound)
+        );
 
-        let lines = bench!(["Formatting sample lines"] => samples
+        let lines = bench!(["Formatting sample lines"] => channel
             .iter()
             .enumerate()
-            .map(|(i, &amplitude)| format!("{i} {:} ", -(amplitude as i32)))
+            .map(|(i, amplitude)| {
+                let percentage = map_range(amplitude, max_amplitude, min_amplitude, -100.0, 100.0);
+                format!("{i} {percentage:.4} ")
+            })
             .collect::<String>());
 
         let x_ticks = bench!(["Formatting X ticks"] => (0..=num_samples)
             .step_by(*sample_rate as usize)
             .map(|sample| {
                 format!(
-                    "M {sample} {} L {sample} {:.2} ",
-                    -max_amplitude,
-                    1.05 * (max_amplitude - min_amplitude) as f32,
+                    "M {sample} -100 L {sample} {:.4} ",
+                    1.05 * 200.0,
                 )
             })
             .collect::<String>());
@@ -379,9 +368,9 @@ fn signal_view(
             .step_by(*sample_rate as usize)
             .map(|sample| {
                 let left = map_range(
-                    sample as f32,
+                    sample as f64,
                     0.0,
-                    (num_samples) as f32,
+                    (num_samples) as f64,
                     0.0,
                     100.0 / Y_SCALE,
                 );
@@ -396,34 +385,45 @@ fn signal_view(
             })
             .collect::<Html>());
 
-        let y_ticks = bench!(["Formatting Y ticks"] => [min_amplitude, 0, max_amplitude]
+        let y_ticks = bench!(["Formatting Y ticks"] =>
+            [
+                min_amplitude,
+                min_amplitude.into_zero(),
+                max_amplitude,
+            ]
             .into_iter()
             .map(|amplitude| {
+                let percentage = map_range(amplitude, max_amplitude, min_amplitude, -100.0, 100.0);
                 format!(
-                    "M 0 {0} L {1} {0} ",
-                    -amplitude,
-                    X_SCALE * num_samples as f32
+                    "M 0 {0:.4} L {1} {0:.4} ",
+                    percentage,
+                    X_SCALE * num_samples as f64
                 )
             })
             .collect::<String>());
 
-        let y_tick_labels = bench!(["Rendering Y tick labels"] => [min_amplitude, 0, max_amplitude]
+        let y_tick_labels = bench!(["Rendering Y tick labels"] =>
+            [
+                min_amplitude,
+                min_amplitude.into_zero(),
+                max_amplitude,
+            ]
             .into_iter()
             .map(|amplitude| {
                 let top = map_range(
-                    amplitude as f32,
-                    max_amplitude as f32,
-                    min_amplitude as f32,
+                    amplitude,
+                    max_amplitude,
+                    min_amplitude,
                     0.0,
                     100.0 / X_SCALE,
                 );
-                let display = if amplitude == 0 {
+                let display = if amplitude.is_zero() {
                     0.0
                 } else {
                     map_range(
-                        amplitude as f32,
-                        i16::MIN as f32,
-                        i16::MAX as f32,
+                        amplitude,
+                        sample_lower_bound,
+                        sample_upper_bound,
                         -100.0,
                         100.0,
                     )
@@ -446,10 +446,9 @@ fn signal_view(
                 <div class="signal-view">
                     <svg xmlns="http://www.w3.org/2000/svg">
                         <svg
-                            viewBox={format!("0 {} {:.4} {:.4}",
-                                -max_amplitude,
-                                Y_SCALE * num_samples as f32,
-                                X_SCALE * (max_amplitude - min_amplitude) as f32,
+                            viewBox={format!("0 -100 {:.4} {:.4}",
+                                Y_SCALE * num_samples as f64,
+                                X_SCALE * 200.0,
                             )}
                             preserveAspectRatio="none">
                             <path vector-effect="non-scaling-stroke" d={x_ticks} />
@@ -457,9 +456,9 @@ fn signal_view(
                             <path vector-effect="non-scaling-stroke"
                                 d={format!("M 0 0 L {lines} {num_samples} 0")} />
                             <rect vector-effect="non-scaling-stroke"
-                                y={format!("{}", -max_amplitude)}
+                                y="-100"
                                 width={num_samples.to_string()}
-                                height={format!("{}", (max_amplitude - min_amplitude))} />
+                                height="200" />
                         </svg>
                     </svg>
                 </div>
@@ -479,29 +478,28 @@ fn signal_view(
 fn app() -> Html {
     bench_start!("Preparing app");
 
-    let stereo_signal = use_state(|| {
+    let signal = use_state(|| {
         bench!(["Generating default stereo signal"] => {
             let frequency = 5;
             let sample_rate = 44100;
             let wave = (0..sample_rate)
                 .map(|i| {
                     map_range(
-                        (2.0 * PI * frequency as f32 * i as f32 / sample_rate as f32).sin(),
+                        (2.0 * PI * frequency as f64 * i as f64 / sample_rate as f64).sin(),
                         -1.0,
                         1.0,
-                        i16::MIN as f32,
-                        i16::MAX as f32,
-                    ) as i16
-                })
-                .collect::<im::Vector<_>>();
-            StereoSignal::new(wave.clone(), wave, sample_rate)
+                        f32::MIN as f64,
+                        f32::MAX as f64,
+                    ) as f32
+                });
+            Signal::from_mono(Channel::from_samples_f32(wave, 32), sample_rate)
         })
     });
     let show_fft = use_state(|| false);
     let on_loaded = {
-        let stereo_signal = stereo_signal.clone();
-        Callback::from(move |new_stereo_signal| {
-            stereo_signal.set(new_stereo_signal);
+        let signal = signal.clone();
+        Callback::from(move |new_signal| {
+            signal.set(new_signal);
         })
     };
     let on_fft = {
@@ -517,8 +515,8 @@ fn app() -> Html {
         <div class="app">
             <ControlBoard on_loaded={on_loaded} on_fft={on_fft} show_fft={*show_fft} />
             <SignalView
-                samples={stereo_signal.left.clone()}
-                sample_rate={stereo_signal.sample_rate}
+                channel={signal.channel(0).clone()}
+                sample_rate={signal.sample_rate()}
                 show_fft={*show_fft} />
         </div>
     }
