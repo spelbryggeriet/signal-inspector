@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, io::Cursor};
+use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec};
 use im::{vector::Iter, Vector};
