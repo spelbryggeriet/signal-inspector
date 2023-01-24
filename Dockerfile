@@ -7,6 +7,9 @@ FROM rust:1.66 as build-backend
 RUN apt update
 RUN apt install -y gcc-aarch64-linux-gnu
 
+# Add target
+RUN rustup target add aarch64-unknown-linux-gnu
+
 # Create a new empty project for the backend
 RUN USER=root cargo new --bin backend
 WORKDIR /backend
@@ -18,9 +21,6 @@ RUN echo "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"
 # Copy our manifests
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./backend/Cargo.toml ./Cargo.toml
-
-# Add target
-RUN rustup target add aarch64-unknown-linux-gnu
 
 # Build only the dependencies to cache them
 RUN cargo build --release --target aarch64-unknown-linux-gnu
@@ -38,6 +38,12 @@ RUN cargo build --release --target aarch64-unknown-linux-gnu
 ###############################################################################
 FROM rust:1.66 as build-frontend
 
+# Add target
+RUN rustup target add wasm32-unknown-unknown
+
+# Install trunk command
+RUN cargo install trunk@0.16.0
+
 # Create a new empty project for the backend
 RUN USER=root cargo new --bin frontend
 WORKDIR /frontend
@@ -47,18 +53,12 @@ COPY ./Cargo.lock ./Cargo.lock
 COPY ./frontend/Cargo.toml ./Cargo.toml
 COPY ./frontend/index.html ./index.html
 
-# Add target
-RUN rustup target add wasm32-unknown-unknown
-
 # Build only the dependencies to cache them
 RUN cargo build --release --target wasm32-unknown-unknown
 RUN rm src/*.rs
 
 # Copy the source code
 COPY ./frontend/src ./src
-
-# Install trunk command
-RUN cargo install trunk@0.16.0
 
 # Build for release
 RUN rm ./target/wasm32-unknown-unknown/release/deps/signal_inspector_frontend*

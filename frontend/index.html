@@ -32,6 +32,15 @@ body {
     height: 100vh;
 }
 
+.app.split {
+    grid-template: 1fr minmax(0, 0.5fr) 5.5fr 1fr / 1fr 6fr 1fr;
+    grid-template-areas:
+        ". control-board .        "
+        ". signal-view   .        "
+        ". spectrum-view y-labels "
+        ". x-labels      empty-box";
+}
+
 .control-board {
     grid-area: control-board;
 
@@ -74,38 +83,45 @@ body {
 }
 
 .signal-view {
-    position: relative;
     grid-area: signal-view;
+    min-height: unset;
 }
 
-.signal-view svg {
+.spectrum-view {
+    grid-area: spectrum-view;
+    position: relative;
+}
+
+.plot > svg {
     width: 100%;
     height: 100%;
     box-sizing: border-box;
 }
 
-.signal-view svg rect {
+.plot rect {
     fill: none;
     stroke: #c4cbca;
     stroke-width: 2;
 }
 
-.signal-view svg path {
+.plot path {
     fill: none;
     stroke: #c4cbca;
     stroke-width: 1;
 }
 
-.signal-view svg path:first-child,
-.signal-view svg path:nth-child(2) {
+.plot path:first-child,
+.plot path:nth-child(2) {
     opacity: 25%;
 }
 
-.signal-view svg path:nth-child(3) {
+.plot path:nth-child(3),
+.plot.mini path:first-child {
+    opacity: 100%;
     stroke: #ee4266;
 }
 
-.signal-view p {
+.plot p {
     position: absolute;
     margin: 0;
 }

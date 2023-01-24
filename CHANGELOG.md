@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- View is now split when toggling frequency spectrum. A smaller mini-view of the sample signal is
+  shown on top, while the larger frequency spectrum view is shown at the bottom.
 ## [0.2.0] - 2023-01-23
 
 Image tag: ghcr.io/spelbryggeriet/signal-inspector-backend:0.2.0
