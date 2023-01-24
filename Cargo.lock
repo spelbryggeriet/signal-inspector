@@ -1497,14 +1497,14 @@ dependencies = [
 
 [[package]]
 name = "signal-inspector-backend"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rocket",
 ]
 
 [[package]]
 name = "signal-inspector-frontend"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gloo",
  "hound",
