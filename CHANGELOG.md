@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2023-01-24
+
+Image tag: ghcr.io/spelbryggeriet/signal-inspector-backend:0.3.0
+
 ### Added
 
 - View is now split when toggling frequency spectrum. A smaller mini-view of the sample signal is
